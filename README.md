@@ -187,6 +187,7 @@ The core flow begins in `Application` which bootstraps Symfony Console, loads co
 ├── composer.json                    # Declares symfony/console, nikic/php-parser, guzzle, symfony/yaml
 ├── src/
 │   ├── Application.php              # Bootstraps Symfony Console, registers commands & config
+│   ├── Context.php                  # Context DTO passed to RuleInterface::detect()
 │   ├── Commands/
 │   │   ├── InitCommand.php          # Creates .safeguard.yml with Laravel detection
 │   │   └── ScanCommand.php          # Orchestrates scanners, handles --fix/--format, exit codes
@@ -202,6 +203,7 @@ The core flow begins in `Application` which bootstraps Symfony Console, loads co
 │   │   ├── AstScanner.php           # Recursive directory scan + AST traversal
 │   │   └── DependencyScanner.php    # composer.lock + GitHub Advisory API
 │   └── Reporting/
+│       ├── Finding.php              # Immutable DTO for a detected security issue
 │       └── Report.php               # Immutable report with toConsole(), toJson(), toSarif()
 ├── tests/
 │   └── Unit/
