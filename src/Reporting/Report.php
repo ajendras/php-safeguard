@@ -11,6 +11,8 @@ use Symfony\Component\Console\Style\SymfonyStyle;
  *
  * Aggregates findings and provides formatted output for console, JSON,
  * and SARIF (Static Analysis Results Interchange Format) consumers.
+ * The SARIF output is specifically crafted for compatibility with GitHub
+ * Advanced Security code scanning.
  */
 final class Report
 {
@@ -76,8 +78,10 @@ final class Report
     }
 
     /**
-     * Returns findings in SARIF 2.1.0 format for integration with GitHub,
-     * VS Code, and other analysis platforms.
+     * Returns findings in SARIF 2.1.0 format optimized for GitHub Advanced
+     * Security code scanning uploads. Includes rich rule metadata (full
+     * description, help, OWASP links, tags), security-severity scores,
+     * relative paths with uriBaseId, and per-finding properties.
      */
     public function toSarif(): string
     {
@@ -92,7 +96,8 @@ final class Report
                     [
                         'physicalLocation' => [
                             'artifactLocation' => [
-                                'uri' => $finding->file,
+                                'uri' => $this->makeRelativePath($finding->file),
+                                'uriBaseId' => '%SRCROOT%',
                             ],
                             'region' => [
                                 'startLine' => $finding->line,
@@ -103,6 +108,7 @@ final class Report
                 'properties' => [
                     'snippet' => $finding->snippet,
                     'suggestion' => $finding->suggestion,
+                    'security-severity' => $this->mapSeverityToSecuritySeverity($finding->severity),
                 ],
             ];
         }, $this->findings);
@@ -202,23 +208,148 @@ final class Report
     }
 
     /**
-     * Builds minimal rule metadata for SARIF output.
+     * Converts an absolute filesystem path into a repository-relative URI.
+     * Normalizes separators to forward slashes (required by SARIF).
+     */
+    private function makeRelativePath(string $path): string
+    {
+        $base = (string) getcwd();
+        if (str_starts_with($path, $base . DIRECTORY_SEPARATOR)) {
+            $relative = substr($path, strlen($base) + 1);
+            return str_replace(DIRECTORY_SEPARATOR, '/', $relative);
+        }
+
+        return $path;
+    }
+
+    /**
+     * Maps internal severity strings to a numeric CVSS-like score that
+     * GitHub Advanced Security understands.
+     */
+    private function mapSeverityToSecuritySeverity(string $severity): float
+    {
+        return match (strtolower($severity)) {
+            'critical' => 9.8,
+            'high' => 7.5,
+            'medium' => 5.0,
+            'low' => 2.0,
+            default => 5.0,
+        };
+    }
+
+    /**
+     * Builds rich SARIF rule metadata for every unique rule that produced
+     * a finding. Supplies fullDescription, help text, OWASP references,
+     * tags and security-severity so that GitHub can display high-quality
+     * alerts with contextual guidance.
      *
      * @return list<array<string, mixed>>
      */
     private function buildSarifRules(): array
     {
-        $rules = [];
-        $uniqueRules = array_unique(array_map(static fn(Finding $f): string => $f->rule, $this->findings));
-
-        foreach ($uniqueRules as $rule) {
-            $rules[] = [
-                'id' => 'php-safeguard/' . $rule,
-                'name' => ucwords(str_replace('-', ' ', $rule)),
+        $knownRules = [
+            'xss' => [
+                'id' => 'php-safeguard/xss',
+                'name' => 'Cross-Site-Scripting',
                 'shortDescription' => [
-                    'text' => 'OWASP-related security issue detected by PHP Safeguard',
+                    'text' => 'Potential XSS vulnerability',
+                ],
+                'fullDescription' => [
+                    'text' => 'Unsanitized data from user input is output directly to the browser. This can lead to reflected or stored cross-site scripting attacks.',
+                ],
+                'help' => [
+                    'text' => 'Wrap output with htmlspecialchars((string) $var, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\'). Prefer using a templating system with built-in escaping such as Blade.',
+                ],
+                'helpUri' => 'https://owasp.org/www-community/attacks/xss/',
+                'properties' => [
+                    'tags' => ['security', 'xss'],
+                    'precision' => 'high',
+                    'security-severity' => 7.5,
+                ],
+            ],
+            'sql-injection' => [
+                'id' => 'php-safeguard/sql-injection',
+                'name' => 'SQL-Injection',
+                'shortDescription' => [
+                    'text' => 'Potential SQL injection',
+                ],
+                'fullDescription' => [
+                    'text' => 'User-controlled data is concatenated into a dynamic SQL query without proper parameterization. This can allow attackers to alter the query logic.',
+                ],
+                'help' => [
+                    'text' => 'Use prepared statements with bound parameters (PDO::prepare, query builder where() with values) instead of string concatenation or DB::raw().',
+                ],
+                'helpUri' => 'https://owasp.org/www-community/attacks/SQL_Injection',
+                'properties' => [
+                    'tags' => ['security', 'sql-injection'],
+                    'precision' => 'high',
+                    'security-severity' => 9.8,
+                ],
+            ],
+            'mass-assignment' => [
+                'id' => 'php-safeguard/mass-assignment',
+                'name' => 'Mass-Assignment',
+                'shortDescription' => [
+                    'text' => 'Potential mass assignment',
+                ],
+                'fullDescription' => [
+                    'text' => 'Untrusted request data is passed to model creation or update methods. Attackers may be able to set restricted fields such as role or is_admin.',
+                ],
+                'help' => [
+                    'text' => 'Use Form Requests with validated() or explicitly set $fillable and $guarded properties on Eloquent models. Avoid forceFill() on user input.',
+                ],
+                'helpUri' => 'https://laravel.com/docs/eloquent#mass-assignment',
+                'properties' => [
+                    'tags' => ['security', 'laravel', 'mass-assignment'],
+                    'precision' => 'medium',
+                    'security-severity' => 6.5,
+                ],
+            ],
+            'vulnerable-dependency' => [
+                'id' => 'php-safeguard/vulnerable-dependency',
+                'name' => 'Vulnerable-Dependency',
+                'shortDescription' => [
+                    'text' => 'Vulnerable Composer dependency',
+                ],
+                'fullDescription' => [
+                    'text' => 'A package listed in composer.lock has a known vulnerability according to the GitHub Advisory Database.',
+                ],
+                'help' => [
+                    'text' => 'Run composer update on the affected package or use a patched version as indicated in the advisory.',
+                ],
+                'helpUri' => 'https://github.com/advisories',
+                'properties' => [
+                    'tags' => ['security', 'dependency'],
+                    'precision' => 'high',
+                    'security-severity' => 8.0,
+                ],
+            ],
+        ];
+
+        $usedRuleNames = array_unique(array_map(
+            static fn(Finding $f): string => $f->rule,
+            $this->findings
+        ));
+
+        $rules = [];
+        foreach ($usedRuleNames as $ruleName) {
+            if (isset($knownRules[$ruleName])) {
+                $rules[] = $knownRules[$ruleName];
+                continue;
+            }
+
+            // fallback for any additional rules
+            $rules[] = [
+                'id' => 'php-safeguard/' . $ruleName,
+                'name' => ucwords(str_replace(['-', '_'], ' ', $ruleName)),
+                'shortDescription' => [
+                    'text' => 'Security issue detected by PHP Safeguard',
                 ],
                 'helpUri' => 'https://github.com/php-safeguard/php-safeguard',
+                'properties' => [
+                    'tags' => ['security'],
+                    'precision' => 'medium',
+                ],
             ];
         }
 

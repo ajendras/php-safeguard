@@ -227,7 +227,7 @@ The test suite (`AstScannerTest`) covers AST parsing, rule detection for `XssRul
 <!-- roadmap:start -->
 - [x] **v0.1.0** — first release: AST Analysis, Dependency Audit, Laravel Rules, Rich Reports
 - [ ] Integrate OpenAI to generate plain-English explanations and concrete fix patches for each finding
-- [ ] Add SARIF output for native GitHub Advanced Security code scanning upload
+- [x] Add SARIF output for native GitHub Advanced Security code scanning upload
 - [ ] Implement safe automatic patching for htmlspecialchars, prepared statements, and validation rules
 - [ ] Build official GitHub Action with matrix support for PHP 8.1-8.3 and Laravel 10/11
 - [ ] Create curated database of Laravel-specific security advisories and config checks
