@@ -36,7 +36,7 @@ final class DependencyScanner
      *
      * @return list<Finding>
      */
-    public function scan(string $projectPath = null): array
+    public function scan(?string $projectPath = null): array
     {
         $projectPath = $projectPath ?? (string) getcwd();
         $lockFile = $projectPath . '/composer.lock';
