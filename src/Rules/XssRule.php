@@ -71,8 +71,7 @@ final class XssRule implements RuleInterface
         // Literals are safe
         if ($node instanceof Scalar\String_ ||
             $node instanceof Scalar\Int_ ||
-            $node instanceof Scalar\Float_ ||
-            $node instanceof Scalar\DNumber) {
+            $node instanceof Scalar\Float_) {
             return false;
         }
 
