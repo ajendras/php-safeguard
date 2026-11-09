@@ -44,7 +44,7 @@ final class MassAssignmentRule implements RuleInterface
         'only',
         'except',
         'toArray',
-        'validated', // still requires care if not all fields are intended
+        // 'validated' is deliberately omitted because it returns already validated data.
     ];
 
     public function detect(Node $node, Context $ctx): ?Finding
@@ -97,10 +97,19 @@ final class MassAssignmentRule implements RuleInterface
      */
     private function isTaintedInput(Node $node): bool
     {
+        // Direct method calls that are known to return raw request data are tainted.
         if ($node instanceof Expr\MethodCall || $node instanceof Expr\StaticCall) {
             $method = $this->getMethodName($node);
             if ($method !== null && in_array($method, self::TAINTED_INPUT_METHODS, true)) {
                 return true;
+            }
+        }
+
+        // Explicitly treat $request->validated() as safe (not tainted).
+        if ($node instanceof Expr\MethodCall && $node->name instanceof Identifier) {
+            $method = strtolower($node->name->toString());
+            if ($method === 'validated') {
+                return false;
             }
         }
 
@@ -116,7 +125,8 @@ final class MassAssignmentRule implements RuleInterface
         }
 
         if ($node instanceof Expr\FuncCall) {
-            return true; // conservative: any function result fed to create() is suspect
+            // Conservative: any function result fed to a mass-assignment method is suspect.
+            return true;
         }
 
         return false;
