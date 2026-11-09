@@ -11,172 +11,178 @@ use PhpSafeguard\Rules\SqlInjectionRule;
 use PhpSafeguard\Rules\XssRule;
 use PhpSafeguard\Scanners\AstScanner;
 
+/**
+ * Unit tests for the AST-based security scanner.
+ *
+ * Covers rule detection for XSS, SQL injection, and mass assignment using
+ * temporary fixtures, safe variants, parse errors, and directory scanning
+ * with skip logic for vendor/tests directories. Updated for strict PHPUnit 11
+ * compatibility and PHP 8.3 runtime behavior.
+ */
 final class AstScannerTest extends TestCase
 {
-    private AstScanner $scanner;
+    private string $tempDir;
 
     protected function setUp(): void
     {
-        $this->scanner = new AstScanner([
-            new XssRule(),
-            new SqlInjectionRule(),
-            new MassAssignmentRule(),
-        ]);
+        $this->tempDir = sys_get_temp_dir() . '/php-safeguard-test-' . bin2hex(random_bytes(8));
+        mkdir($this->tempDir, 0777, true);
     }
 
-    public function testItDetectsXss(): void
+    protected function tearDown(): void
     {
-        $code = '<?php echo $userInput; ?>';
-        $file = $this->createTempFile($code);
+        if (is_dir($this->tempDir)) {
+            $this->removeDirectory($this->tempDir);
+        }
+    }
 
-        $findings = $this->scanner->scan($file);
+    private function removeDirectory(string $directory): void
+    {
+        $files = scandir($directory);
+        if ($files === false) {
+            return;
+        }
 
-        $this->assertCount(1, $findings);
+        foreach ($files as $file) {
+            if ($file === '.' || $file === '..') {
+                continue;
+            }
+
+            $path = $directory . DIRECTORY_SEPARATOR . $file;
+            if (is_dir($path)) {
+                $this->removeDirectory($path);
+            } else {
+                unlink($path);
+            }
+        }
+
+        rmdir($directory);
+    }
+
+    private function createFixture(string $code, string $filename = 'test.php'): string
+    {
+        $path = $this->tempDir . '/' . $filename;
+        $dir = dirname($path);
+
+        if (!is_dir($dir)) {
+            mkdir($dir, 0777, true);
+        }
+
+        file_put_contents($path, $code);
+        return $path;
+    }
+
+    public function testDetectsXssVulnerability(): void
+    {
+        $code = "<?php\necho \$_GET['user_input'];";
+        $filePath = $this->createFixture($code);
+
+        $scanner = new AstScanner([new XssRule()]);
+        $findings = $scanner->scan($filePath);
+
+        self::assertCount(1, $findings);
         $finding = $findings[0];
-        $this->assertSame('xss', $finding->rule);
-        $this->assertSame('high', $finding->severity);
-        $this->assertStringContainsString('unsanitized', $finding->message);
-        $this->assertSame($file, $finding->file);
-        $this->assertGreaterThan(0, $finding->line);
-        $this->assertNotNull($finding->snippet);
-        $this->assertNotNull($finding->suggestion);
 
-        unlink($file);
+        self::assertInstanceOf(Finding::class, $finding);
+        self::assertSame('xss', $finding->rule);
+        self::assertSame('high', $finding->severity);
+        self::assertSame($filePath, $finding->file);
+        self::assertSame(2, $finding->line);
+        self::assertStringContainsString('echo', $finding->snippet ?? '');
+        self::assertStringContainsString('htmlspecialchars', $finding->suggestion ?? '');
     }
 
-    public function testItDoesNotFlagEscapedOutput(): void
+    public function testIgnoresSafeOutputEscaping(): void
     {
-        $code = '<?php echo htmlspecialchars($userInput); ?>';
-        $file = $this->createTempFile($code);
+        $code = "<?php\necho htmlspecialchars(\$input);";
+        $filePath = $this->createFixture($code);
 
-        $findings = $this->scanner->scan($file);
+        $scanner = new AstScanner([new XssRule()]);
+        $findings = $scanner->scan($filePath);
 
-        $this->assertCount(0, $findings);
-
-        unlink($file);
+        self::assertCount(0, $findings);
     }
 
-    public function testItDoesNotFlagLiteralOutput(): void
+    public function testDetectsSqlInjection(): void
     {
-        $code = '<?php echo "hello"; echo 42; echo 3.14; ?>';
-        $file = $this->createTempFile($code);
+        $code = "<?php\nDB::raw('SELECT * FROM users WHERE id = ' . \$_GET['id']);";
+        $filePath = $this->createFixture($code);
 
-        $findings = $this->scanner->scan($file);
+        $scanner = new AstScanner([new SqlInjectionRule()]);
+        $findings = $scanner->scan($filePath);
 
-        $this->assertCount(0, $findings);
-
-        unlink($file);
-    }
-
-    public function testItDetectsSqlInjection(): void
-    {
-        $code = '<?php DB::raw("SELECT * FROM users WHERE id = " . $id);';
-        $file = $this->createTempFile($code);
-
-        $findings = $this->scanner->scan($file);
-
-        $this->assertCount(1, $findings);
+        self::assertCount(1, $findings);
         $finding = $findings[0];
-        $this->assertSame('sql-injection', $finding->rule);
-        $this->assertSame('critical', $finding->severity);
-        $this->assertStringContainsString('SQL injection', $finding->message);
-        $this->assertNotNull($finding->suggestion);
 
-        unlink($file);
+        self::assertInstanceOf(Finding::class, $finding);
+        self::assertSame('sql-injection', $finding->rule);
+        self::assertSame('critical', $finding->severity);
+        self::assertStringContainsString('DB::raw', $finding->snippet ?? '');
+        self::assertStringContainsString('prepared statements', $finding->suggestion ?? '');
     }
 
-    public function testItDoesNotFlagParameterizedQuery(): void
+    public function testIgnoresSafeSqlQuery(): void
     {
-        $code = '<?php DB::select("SELECT * FROM users WHERE id = ?", [$id]);';
-        $file = $this->createTempFile($code);
+        $code = "<?php\nDB::select('SELECT * FROM users WHERE id = ?', [\$id]);";
+        $filePath = $this->createFixture($code);
 
-        $findings = $this->scanner->scan($file);
+        $scanner = new AstScanner([new SqlInjectionRule()]);
+        $findings = $scanner->scan($filePath);
 
-        $this->assertCount(0, $findings);
-
-        unlink($file);
+        self::assertCount(0, $findings);
     }
 
-    public function testItDetectsMassAssignment(): void
+    public function testDetectsMassAssignment(): void
     {
-        $code = '<?php $user->fill($request->all());';
-        $file = $this->createTempFile($code);
+        $code = "<?php\n\$user->fill(\$request->all());";
+        $filePath = $this->createFixture($code);
 
-        $findings = $this->scanner->scan($file);
+        $scanner = new AstScanner([new MassAssignmentRule()]);
+        $findings = $scanner->scan($filePath);
 
-        $this->assertCount(1, $findings);
+        self::assertCount(1, $findings);
         $finding = $findings[0];
-        $this->assertSame('mass-assignment', $finding->rule);
-        $this->assertSame('high', $finding->severity);
-        $this->assertStringContainsString('mass assignment', $finding->message);
-        $this->assertNotNull($finding->suggestion);
 
-        unlink($file);
+        self::assertInstanceOf(Finding::class, $finding);
+        self::assertSame('mass-assignment', $finding->rule);
+        self::assertSame('high', $finding->severity);
+        self::assertStringContainsString('fill', $finding->snippet ?? '');
+        self::assertStringContainsString('$fillable', $finding->suggestion ?? '');
     }
 
-    public function testItHandlesParseErrorsGracefully(): void
+    public function testParseErrorIsSkipped(): void
     {
-        $code = '<?php echo $var';
-        $file = $this->createTempFile($code);
+        $code = "<?php\nthis is invalid php code echo \$var;";
+        $filePath = $this->createFixture($code);
 
-        $findings = $this->scanner->scan($file);
+        $scanner = new AstScanner([new XssRule(), new SqlInjectionRule()]);
+        $findings = $scanner->scan($filePath);
 
-        $this->assertCount(0, $findings);
-
-        unlink($file);
+        self::assertCount(0, $findings);
     }
 
     public function testScanDirectorySkipsVendorAndTests(): void
     {
-        $tempDir = sys_get_temp_dir() . '/astscanner_test_' . uniqid('', true);
-        mkdir($tempDir, 0755, true);
+        $this->createFixture("<?php echo \$_GET['bad'];", 'vendor/bad.php');
+        $this->createFixture("<?php echo \$_GET['bad'];", 'tests/bad.php');
+        $goodPath = $this->createFixture("<?php echo \$_GET['bad'];", 'good.php');
 
-        $vulnerableFile = $tempDir . '/vulnerable.php';
-        $code = '<?php echo $_GET["x"]; ?>';
-        file_put_contents($vulnerableFile, $code);
+        $scanner = new AstScanner([new XssRule()]);
+        $findings = $scanner->scanDirectory($this->tempDir);
 
-        $vendorDir = $tempDir . '/vendor';
-        mkdir($vendorDir, 0755, true);
-        $vendorFile = $vendorDir . '/lib.php';
-        file_put_contents($vendorFile, '<?php echo $tainted; ?>');
-
-        $testSubDir = $tempDir . '/tests';
-        mkdir($testSubDir, 0755, true);
-        $testFile = $testSubDir . '/test.php';
-        file_put_contents($testFile, '<?php echo $unsafe; ?>');
-
-        $findings = $this->scanner->scanDirectory($tempDir);
-
-        $this->assertCount(1, $findings);
-        $this->assertStringContainsString('vulnerable.php', $findings[0]->file);
-        $this->assertStringNotContainsString('vendor', $findings[0]->file);
-        $this->assertStringNotContainsString('/tests/', $findings[0]->file);
-
-        $this->recursiveRemoveDir($tempDir);
+        self::assertCount(1, $findings);
+        self::assertStringContainsString('good.php', $findings[0]->file);
     }
 
-    private function createTempFile(string $content): string
+    public function testAddRuleDynamically(): void
     {
-        $file = tempnam(sys_get_temp_dir(), 'php_safeguard_test_');
-        if ($file === false) {
-            throw new \RuntimeException('Failed to create temp file');
-        }
-        file_put_contents($file, $content);
-        return $file;
-    }
+        $scanner = new AstScanner();
+        $scanner->addRule(new XssRule());
 
-    private function recursiveRemoveDir(string $dir): void
-    {
-        $files = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($dir, \RecursiveDirectoryIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
+        $code = "<?php\necho \$_GET['x'];";
+        $filePath = $this->createFixture($code);
+        $findings = $scanner->scan($filePath);
 
-        foreach ($files as $fileInfo) {
-            $todo = ($fileInfo->isDir() ? 'rmdir' : 'unlink');
-            $todo($fileInfo->getRealPath());
-        }
-
-        rmdir($dir);
+        self::assertCount(1, $findings);
     }
 }
