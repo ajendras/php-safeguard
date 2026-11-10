@@ -134,6 +134,7 @@ final class InitCommand extends Command
                 'mass-assignment' => $isLaravel,
                 'laravel-validation' => $isLaravel,
                 'route-model-binding' => $isLaravel,
+                'secret-leak' => true,
             ],
             'severity' => [
                 'minimum' => 'medium',

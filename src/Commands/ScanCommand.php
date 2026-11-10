@@ -7,6 +7,7 @@ namespace PhpSafeguard\Commands;
 use PhpSafeguard\Reporting\Finding;
 use PhpSafeguard\Reporting\Report;
 use PhpSafeguard\Rules\Laravel\MassAssignmentRule;
+use PhpSafeguard\Rules\SecretLeakRule;
 use PhpSafeguard\Rules\SqlInjectionRule;
 use PhpSafeguard\Rules\XssRule;
 use PhpSafeguard\Scanners\AstScanner;
@@ -170,6 +171,10 @@ final class ScanCommand extends Command
 
         if ($enabled['mass-assignment'] ?? false) {
             $rules[] = new MassAssignmentRule();
+        }
+
+        if ($enabled['secret-leak'] ?? false) {
+            $rules[] = new SecretLeakRule();
         }
 
         // Additional rules can be registered here as they are implemented

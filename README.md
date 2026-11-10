@@ -40,6 +40,7 @@ PHP web apps remain prime targets for injection and misconfiguration attacks, ye
 <td>🔍 <b>AST Analysis</b><br>Traverses PHP files with <code>AstScanner</code> and <code>NodeVisitor</code> to apply <code>XssRule</code>, <code>SqlInjectionRule</code> and more</td>
 <td>📦 <b>Dependency Audit</b><br><code>DependencyScanner</code> reads <code>composer.lock</code> and checks the GitHub Advisory Database via Guzzle</td>
 <td>🛡️ <b>Laravel Rules</b><br><code>MassAssignmentRule</code> detects <code>fill($request->all())</code>, missing guarded properties, and unsafe model calls</td>
+<td>🔑 <b>Secret Detection</b><br><code>SecretLeakRule</code> with entropy calculation and service-specific regexes for API keys, tokens, passwords</td>
 </tr>
 <tr>
 <td>📊 <b>Rich Reports</b><br><code>Report</code> class outputs color-coded console, JSON, or SARIF with line numbers, snippets, and remediation suggestions</td>
@@ -116,6 +117,7 @@ rules:
   xss: true
   sql-injection: true
   mass-assignment: true
+  secret-leak: true
 severity:
   minimum: high
 auto-fix:
@@ -147,6 +149,7 @@ PHP Safeguard reads `.safeguard.yml` (or falls back to `Loader::DEFAULT_CONFIG`)
 | `rules.xss`                   | `true`      | Enable `XssRule` for unsanitized `echo`/`print` |
 | `rules.sql-injection`         | `true`      | Enable `SqlInjectionRule` for `DB::raw()` and concatenation |
 | `rules.mass-assignment`       | `true` (Laravel) | Enable `MassAssignmentRule` for `fill()`/`create()` with tainted input |
+| `rules.secret-leak`           | `true`      | Enable `SecretLeakRule` using entropy + regex for detecting secrets |
 | `severity.minimum`            | `medium`    | Minimum severity that will cause non-zero exit (`low`/`medium`/`high`/`critical`) |
 | `auto-fix.enabled`            | `true`      | Whether `--fix` should run (also respects the CLI flag) |
 | `auto-fix.headers`            | `true`      | Add `X-Frame-Options`, `Strict-Transport-Security` etc. to entry files |
@@ -168,6 +171,7 @@ flowchart TD
     RuleInterface --> XssRule
     RuleInterface --> SqlInjectionRule
     RuleInterface --> MassAssignmentRule
+    RuleInterface --> SecretLeakRule
     AstScanner & DependencyScanner --> Finding[Reporting\Finding]
     Finding --> Report[Reporting\Report]
     Report --> toConsole
@@ -197,6 +201,7 @@ The core flow begins in `Application` which bootstraps Symfony Console, loads co
 │   │   ├── RuleInterface.php        # detect(Node, Context): ?Finding contract
 │   │   ├── XssRule.php              # Detects unsafe echo/print/concat
 │   │   ├── SqlInjectionRule.php     # Flags DB::raw(), query() with concatenation
+│   │   ├── SecretLeakRule.php       # Entropy + regex based secret leak detection
 │   │   └── Laravel/
 │   │       └── MassAssignmentRule.php # Detects fill($request->all()) etc.
 │   ├── Scanners/
@@ -221,7 +226,7 @@ composer test
 vendor/bin/phpunit
 ```
 
-The test suite (`AstScannerTest`) covers AST parsing, rule detection for `XssRule`, `SqlInjectionRule`, and `MassAssignmentRule` using temporary PHP fixture snippets, edge cases (safe equivalents, parse errors), and the full scanner pipeline.
+The test suite (`AstScannerTest`) covers AST parsing, rule detection for `XssRule`, `SqlInjectionRule`, `MassAssignmentRule` and the new `SecretLeakRule` using temporary PHP fixture snippets, edge cases (safe equivalents, parse errors), and the full scanner pipeline.
 
 ## 📍 Roadmap
 <!-- roadmap:start -->
@@ -236,7 +241,7 @@ The test suite (`AstScannerTest`) covers AST parsing, rule detection for `XssRul
 - [ ] Optimize AST traversal with caching for large monorepos (>500 files)
 - [ ] Include WordPress plugin scanning profile for common insecure themes and plugins
 - [ ] Provide HTML dashboard with interactive findings treemap and trend graphs
-- [ ] Add secret-leak detection (API keys, passwords) using entropy + regex rules
+- [x] Add secret-leak detection (API keys, passwords) using entropy + regex rules
 
 > 🤖 This roadmap is worked through continuously — ideas and PRs welcome!
 <!-- roadmap:end -->

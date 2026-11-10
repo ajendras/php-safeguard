@@ -29,6 +29,7 @@ final class Loader
             'mass-assignment' => false,
             'laravel-validation' => false,
             'route-model-binding' => false,
+            'secret-leak' => true,
         ],
         'severity' => [
             'minimum' => 'medium',

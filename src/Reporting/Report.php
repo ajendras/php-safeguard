@@ -305,6 +305,25 @@ final class Report
                     'security-severity' => 6.5,
                 ],
             ],
+            'secret-leak' => [
+                'id' => 'php-safeguard/secret-leak',
+                'name' => 'Secret-Leak',
+                'shortDescription' => [
+                    'text' => 'Hardcoded secret or API key',
+                ],
+                'fullDescription' => [
+                    'text' => 'A potential secret such as an API key, password, or authentication token was found embedded in the source code. Hardcoded credentials are a major security risk as they can be exposed through version control or decompilation.',
+                ],
+                'help' => [
+                    'text' => 'Migrate secrets to environment variables or a dedicated secrets manager. Never commit them. Use constant values loaded from .env files with libraries like symfony/dotenv or vlucas/phpdotenv.',
+                ],
+                'helpUri' => 'https://owasp.org/www-community/controls/Secrets_Management',
+                'properties' => [
+                    'tags' => ['security', 'secret-leak', 'credentials'],
+                    'precision' => 'medium',
+                    'security-severity' => 9.5,
+                ],
+            ],
             'vulnerable-dependency' => [
                 'id' => 'php-safeguard/vulnerable-dependency',
                 'name' => 'Vulnerable-Dependency',
