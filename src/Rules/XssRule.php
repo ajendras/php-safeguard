@@ -38,16 +38,17 @@ final class XssRule implements RuleInterface
 
     public function detect(Node $node, Context $ctx): ?Finding
     {
-        if (!($node instanceof Stmt\Echo_ || $node instanceof Expr\Print_)) {
+        $expressions = $this->getOutputExpressions($node);
+        if ($expressions === []) {
             return null;
         }
 
-        $expressions = $node instanceof Stmt\Echo_
-            ? $node->exprs
-            : [$node->expr];
-
         foreach ($expressions as $expr) {
-            if ($this->isUnsanitizedOutput($expr)) {
+            if ($this->isEscaped($expr)) {
+                continue;
+            }
+
+            if ($this->containsTaintedData($expr)) {
                 return new Finding(
                     rule: 'xss',
                     message: 'Potential XSS: unsanitized data is being output directly',
@@ -55,7 +56,7 @@ final class XssRule implements RuleInterface
                     line: $ctx->line,
                     severity: 'high',
                     snippet: $this->extractSnippet($ctx->source, $ctx->line),
-                    suggestion: 'Wrap the output with htmlspecialchars(): htmlspecialchars((string) $var, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\') or use a templating engine with auto-escaping.'
+                    suggestion: 'Escape output using htmlspecialchars((string) $var, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\') or Laravel\'s e() helper. Prefer template engines with auto-escaping (Blade {{ }}) over raw output.'
                 );
             }
         }
@@ -63,49 +64,64 @@ final class XssRule implements RuleInterface
         return null;
     }
 
-    /**
-     * Determines whether an expression represents unsanitized output.
-     */
-    private function isUnsanitizedOutput(Node $node): bool
+    private function getOutputExpressions(Node $node): array
     {
-        // Literals are safe
-        if ($node instanceof Scalar\String_ ||
-            $node instanceof Scalar\Int_ ||
-            $node instanceof Scalar\Float_) {
+        if ($node instanceof Stmt\Echo_) {
+            return $node->exprs;
+        }
+
+        if ($node instanceof Expr\Print_) {
+            return [$node->expr];
+        }
+
+        return [];
+    }
+
+    private function isEscaped(Node $node): bool
+    {
+        if (!$node instanceof Expr\FuncCall || !$node->name instanceof Name) {
             return false;
         }
 
-        // Direct variables, array access, or object properties are dangerous
-        if ($node instanceof Expr\Variable ||
-            $node instanceof Expr\ArrayDimFetch ||
-            $node instanceof Expr\PropertyFetch) {
-            return true;
-        }
-
-        // Function calls: safe only if they are escaping functions
-        if ($node instanceof Expr\FuncCall && $node->name instanceof Name) {
-            $functionName = strtolower($node->name->toString());
-            return !in_array($functionName, self::ESCAPING_FUNCTIONS, true);
-        }
-
-        // Concatenation is unsafe if any part is unsafe
-        if ($node instanceof BinaryOp\Concat) {
-            return $this->isUnsanitizedOutput($node->left) ||
-                   $this->isUnsanitizedOutput($node->right);
-        }
-
-        // Method calls on objects (e.g. $obj->getHtml()) are treated as risky
-        if ($node instanceof Expr\MethodCall) {
-            return true;
-        }
-
-        // Unknown constructs inside output statements are conservatively flagged
-        return true;
+        $funcName = strtolower($node->name->toString());
+        return in_array($funcName, self::ESCAPING_FUNCTIONS, true);
     }
 
-    /**
-     * Extracts the source line that triggered the finding.
-     */
+    private function containsTaintedData(Node $node): bool
+    {
+        if ($node instanceof Expr\Variable) {
+            return true;
+        }
+
+        if ($node instanceof Expr\MethodCall || $node instanceof Expr\StaticCall) {
+            return true;
+        }
+
+        if ($node instanceof Expr\ArrayDimFetch) {
+            return true;
+        }
+
+        if ($node instanceof BinaryOp\Concat) {
+            return $this->containsTaintedData($node->left) || $this->containsTaintedData($node->right);
+        }
+
+        if ($node instanceof Scalar\InterpolatedString) {
+            foreach ($node->parts as $part) {
+                if (!$part instanceof Scalar\String_) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        if ($node instanceof Expr\FuncCall) {
+            // function calls are considered tainted unless it's an escaping function (already checked)
+            return true;
+        }
+
+        return false;
+    }
+
     private function extractSnippet(string $source, int $line): string
     {
         $lines = preg_split('/\r\n?|\n/', $source);
