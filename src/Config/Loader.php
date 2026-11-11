@@ -38,6 +38,8 @@ final class Loader
             'enabled' => true,
             'headers' => true,
             'escape-output' => true,
+            'prepared-statements' => true,
+            'validation-rules' => true,
         ],
         'ignore' => [],
         'report' => [

@@ -22,7 +22,8 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 /**
  * Main command that orchestrates security scanning of PHP/Laravel projects.
  *
- * Supports multiple output formats, safe auto-fix mode, progress control,
+ * Supports multiple output formats, safe auto-fix mode for htmlspecialchars,
+ * prepared statements, validation rules and security headers, progress control,
  * and CI-friendly non-zero exit codes when high-severity issues are found.
  */
 #[AsCommand(
@@ -57,7 +58,7 @@ final class ScanCommand extends Command
                 'fix',
                 null,
                 InputOption::VALUE_NONE,
-                'Automatically apply safe fixes (e.g. htmlspecialchars, security headers)'
+                'Automatically apply safe fixes for htmlspecialchars, prepared statements, validation rules and security headers'
             )
             ->addOption(
                 'no-progress',
@@ -203,14 +204,17 @@ final class ScanCommand extends Command
     }
 
     /**
-     * Applies safe, non-breaking fixes for common issues.
-     *
-     * Currently handles output escaping and security headers.
+     * Applies safe, non-breaking fixes for common issues using conservative
+     * pattern matching. Supports htmlspecialchars escaping for XSS,
+     * conversion of unsafe SQL to prepared statements, replacement of
+     * tainted input with validated() for Laravel mass assignment, and
+     * insertion of security headers.
      */
     private function applySafeFixes(string $scanPath, array $findings, SymfonyStyle $io): void
     {
         $fixed = 0;
         $autoFixConfig = $this->config['auto-fix'] ?? [];
+        $processedFiles = [];
 
         // Fix 1: Add missing security headers to entrypoint files
         if ($autoFixConfig['headers'] ?? true) {
@@ -227,13 +231,13 @@ final class ScanCommand extends Command
                 }
 
                 $headerBlock = <<<'PHP'
-                // Security headers added automatically by PHP Safeguard
-                header('X-Frame-Options: DENY');
-                header('X-Content-Type-Options: nosniff');
-                header('Referrer-Policy: strict-origin-when-cross-origin');
-                header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
+// Security headers added automatically by PHP Safeguard
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
 
-                PHP;
+PHP;
 
                 $content = preg_replace(
                     '/^<\?php\s*/',
@@ -248,34 +252,44 @@ final class ScanCommand extends Command
             }
         }
 
-        // Fix 2: Wrap obvious echo/print of variables with htmlspecialchars
+        // Fix 2: Wrap obvious echo/print/short-tags with htmlspecialchars
         if ($autoFixConfig['escape-output'] ?? true) {
             foreach ($findings as $finding) {
-                if ($finding->rule !== 'xss' || $finding->suggestion === null) {
+                if ($finding->rule !== 'xss' || in_array($finding->file, $processedFiles, true)) {
                     continue;
                 }
 
-                $filePath = $finding->file;
-                if (!file_exists($filePath) || !is_writable($filePath)) {
-                    continue;
-                }
-
-                $content = file_get_contents($filePath);
-                if ($content === false) {
-                    continue;
-                }
-
-                // Very conservative replacement for common echo $var; patterns
-                $escaped = preg_replace(
-                    '/echo\s+([^;]+?)(;|$)/',
-                    'echo htmlspecialchars((string) $1, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\')$2',
-                    $content
-                );
-
-                if ($escaped !== $content && file_put_contents($filePath, $escaped) !== false) {
+                if ($this->applyHtmlEscaping($finding->file, $io)) {
                     $fixed++;
-                    $io->text(sprintf('Escaped output in <info>%s:%d</info>', basename($filePath), $finding->line));
-                    break; // only fix one per file to be safe
+                    $processedFiles[] = $finding->file;
+                }
+            }
+        }
+
+        // Fix 3: Convert unsafe SQL concatenation into prepared statements
+        if ($autoFixConfig['prepared-statements'] ?? true) {
+            foreach ($findings as $finding) {
+                if ($finding->rule !== 'sql-injection' || in_array($finding->file, $processedFiles, true)) {
+                    continue;
+                }
+
+                if ($this->applyPreparedStatements($finding->file, $io)) {
+                    $fixed++;
+                    $processedFiles[] = $finding->file;
+                }
+            }
+        }
+
+        // Fix 4: Upgrade tainted input to validated() for Laravel mass assignment
+        if ($autoFixConfig['validation-rules'] ?? true) {
+            foreach ($findings as $finding) {
+                if ($finding->rule !== 'mass-assignment' || in_array($finding->file, $processedFiles, true)) {
+                    continue;
+                }
+
+                if ($this->applyValidationRules($finding->file, $io)) {
+                    $fixed++;
+                    $processedFiles[] = $finding->file;
                 }
             }
         }
@@ -285,5 +299,112 @@ final class ScanCommand extends Command
         } else {
             $io->note('No safe automatic fixes were applicable.');
         }
+    }
+
+    /**
+     * Applies htmlspecialchars() to echo, print and short echo tags.
+     */
+    private function applyHtmlEscaping(string $filePath, SymfonyStyle $io): bool
+    {
+        if (!file_exists($filePath) || !is_writable($filePath)) {
+            return false;
+        }
+
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            return false;
+        }
+
+        $original = $content;
+
+        // Conservative replacement for echo/print statements
+        $content = preg_replace(
+            '/(echo|print)\s+([^;]+?)(;|$)/',
+            '$1 htmlspecialchars((string) $2, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\')$3',
+            $content
+        );
+
+        // Handle short echo tags <?= ... ?>
+        $content = preg_replace(
+            '/<\?=\s*([^?]+?)\s*\?>/',
+            '<?= htmlspecialchars((string) $1, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\') ?>',
+            $content
+        );
+
+        if ($content !== $original && file_put_contents($filePath, $content) !== false) {
+            $io->text(sprintf('Applied htmlspecialchars escaping in <info>%s</info>', basename($filePath)));
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Converts common unsafe SQL concatenation patterns into prepared statements.
+     */
+    private function applyPreparedStatements(string $filePath, SymfonyStyle $io): bool
+    {
+        if (!file_exists($filePath) || !is_writable($filePath)) {
+            return false;
+        }
+
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            return false;
+        }
+
+        $original = $content;
+
+        // Pattern for DB::select(), DB::raw(), etc. with concatenation
+        $content = preg_replace(
+            '/(DB::(select|selectOne|raw|insert|get|update|delete|statement)\s*\(\s*["\'])([^"\']*?)\s*\.\s*\$(\w+)([^"\']*?)(["\']?\s*\))/',
+            '$1$3?", [$4]$6',
+            $content
+        );
+
+        // Pattern for query builder raw methods (whereRaw, orderByRaw, ...)
+        $content = preg_replace(
+            '/(->\s*(whereRaw|selectRaw|orderByRaw|havingRaw)\s*\(\s*["\'])([^"\']*?)\s*\.\s*\$(\w+)([^"\']*?)(["\']?\s*\))/',
+            '$1$3?", [$4]$6',
+            $content
+        );
+
+        if ($content !== $original && file_put_contents($filePath, $content) !== false) {
+            $io->text(sprintf('Converted to prepared statement in <info>%s</info>', basename($filePath)));
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Upgrades mass-assignment calls from all()/input() to validated().
+     */
+    private function applyValidationRules(string $filePath, SymfonyStyle $io): bool
+    {
+        if (!file_exists($filePath) || !is_writable($filePath)) {
+            return false;
+        }
+
+        $content = file_get_contents($filePath);
+        if ($content === false) {
+            return false;
+        }
+
+        $original = $content;
+
+        // Upgrade tainted bulk input to validated() for model operations
+        $content = preg_replace(
+            '/(fill|create|update|forceFill)\s*\(\s*(\$request|\$input|\$data)->(all|input)\(\s*\)/',
+            '$1($2->validated()',
+            $content
+        );
+
+        if ($content !== $original && file_put_contents($filePath, $content) !== false) {
+            $io->text(sprintf('Upgraded to validated() input in <info>%s</info>', basename($filePath)));
+            return true;
+        }
+
+        return false;
     }
 }

@@ -258,7 +258,7 @@ final class Report
                     'text' => 'Unsanitized data from user input is output directly to the browser. This can lead to reflected or stored cross-site scripting attacks.',
                 ],
                 'help' => [
-                    'text' => 'Wrap output with htmlspecialchars((string) $var, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\'). Prefer using a templating system with built-in escaping such as Blade.',
+                    'text' => 'Wrap output with htmlspecialchars((string) $var, ENT_QUOTES | ENT_SUBSTITUTE, \'UTF-8\'). The --fix flag automatically applies escaping for common echo/print patterns.',
                 ],
                 'helpUri' => 'https://owasp.org/www-community/attacks/xss/',
                 'properties' => [
@@ -277,7 +277,7 @@ final class Report
                     'text' => 'User-controlled data is concatenated into a dynamic SQL query without proper parameterization. This can allow attackers to alter the query logic.',
                 ],
                 'help' => [
-                    'text' => 'Use prepared statements with bound parameters (PDO::prepare, query builder where() with values) instead of string concatenation or DB::raw().',
+                    'text' => 'Use prepared statements with bound parameters (PDO::prepare, query builder where() with values) instead of string concatenation or DB::raw(). The --fix flag can automatically convert common unsafe patterns to parameterized queries.',
                 ],
                 'helpUri' => 'https://owasp.org/www-community/attacks/SQL_Injection',
                 'properties' => [
@@ -296,7 +296,7 @@ final class Report
                     'text' => 'Untrusted request data is passed to model creation or update methods. Attackers may be able to set restricted fields such as role or is_admin.',
                 ],
                 'help' => [
-                    'text' => 'Use Form Requests with validated() or explicitly set $fillable and $guarded properties on Eloquent models. Avoid forceFill() on user input.',
+                    'text' => 'Use Form Requests with validated() or explicitly set $fillable and $guarded properties on Eloquent models. Avoid forceFill() on user input. The --fix flag automatically upgrades $request->all() to $request->validated().',
                 ],
                 'helpUri' => 'https://laravel.com/docs/eloquent#mass-assignment',
                 'properties' => [

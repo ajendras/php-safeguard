@@ -76,7 +76,7 @@ final class MassAssignmentRule implements RuleInterface
             line: $ctx->line,
             severity: $isModelContext ? 'high' : 'medium',
             snippet: $this->extractSnippet($ctx->source, $ctx->line),
-            suggestion: 'Use $request->validated() with form requests, or ensure the model defines $fillable or $guarded properties. Avoid forceFill() in production code.'
+            suggestion: 'Use $request->validated() with form requests, or ensure the model defines $fillable or $guarded properties. Avoid forceFill() in production code. The --fix flag can automatically upgrade all()/input() calls.'
         );
     }
 

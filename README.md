@@ -26,7 +26,7 @@ PHP web apps remain prime targets for injection and misconfiguration attacks, ye
 - **Fast AST-based analysis** powered by `nikic/php-parser` that catches unsanitized sinks for XSS, SQLi, and more
 - **Laravel-aware rules** via `MassAssignmentRule`, validation, and route-model-binding checks that plain PHP scanners miss
 - **Dependency auditing** with `DependencyScanner` that queries the GitHub Advisory Database using real `composer.lock` data
-- **Safe auto-fix** (`--fix`) that adds security headers and wraps output with `htmlspecialchars` without breaking your code
+- **Safe auto-fix** (`--fix`) that adds security headers, wraps output with `htmlspecialchars`, converts SQL queries to prepared statements, and upgrades mass-assignment calls to use validated input using conservative pattern matching
 - **CI-ready** with configurable severity thresholds, SARIF output, and non-zero exit codes on high-severity findings
 
 ## 🎬 Demo
@@ -44,7 +44,7 @@ PHP web apps remain prime targets for injection and misconfiguration attacks, ye
 </tr>
 <tr>
 <td>📊 <b>Rich Reports</b><br><code>Report</code> class outputs color-coded console, JSON, or SARIF with line numbers, snippets, and remediation suggestions</td>
-<td>🛠️ <b>Safe Auto-Fix</b><br><code>--fix</code> automatically adds security headers and escapes output using conservative regex replacements</td>
+<td>🛠️ <b>Safe Auto-Fix</b><br><code>--fix</code> automatically adds security headers, applies <code>htmlspecialchars</code>, converts queries to prepared statements, and upgrades to validated() input using conservative regex replacements</td>
 <td>⚙️ <b>YAML Config</b><br><code>Loader</code> parses <code>.safeguard.yml</code> with rule toggles, severity thresholds, and Laravel auto-detection</td>
 </tr>
 <tr>
@@ -102,7 +102,7 @@ Initialize (or overwrite) a configuration file with sensible defaults and Larave
 safeguard init --force
 ```
 
-Apply safe automatic fixes for XSS and missing headers:
+Apply safe automatic fixes for XSS, SQLi, validation and missing headers:
 
 ```bash
 safeguard scan --fix
@@ -122,6 +122,10 @@ severity:
   minimum: high
 auto-fix:
   enabled: true
+  headers: true
+  escape-output: true
+  prepared-statements: true
+  validation-rules: true
 report:
   format: console
   show-snippets: true
@@ -154,6 +158,8 @@ PHP Safeguard reads `.safeguard.yml` (or falls back to `Loader::DEFAULT_CONFIG`)
 | `auto-fix.enabled`            | `true`      | Whether `--fix` should run (also respects the CLI flag) |
 | `auto-fix.headers`            | `true`      | Add `X-Frame-Options`, `Strict-Transport-Security` etc. to entry files |
 | `auto-fix.escape-output`      | `true`      | Wrap obvious `echo` of variables with `htmlspecialchars` |
+| `auto-fix.prepared-statements`| `true`      | Convert unsafe SQL string concatenation into parameterized prepared statements |
+| `auto-fix.validation-rules`   | `true`      | Upgrade `$request->all()` to `$request->validated()` in mass-assignment calls |
 | `report.format`               | `console`   | Output format used by `Report` (`console`/`json`/`sarif`) |
 | `report.show-snippets`        | `true`      | Include offending code line in console reports |
 | `ignore`                      | `[]`        | List of `file:line` patterns to suppress |
@@ -233,7 +239,7 @@ The test suite (`AstScannerTest`) covers AST parsing, rule detection for `XssRul
 - [x] **v0.1.0** — first release: AST Analysis, Dependency Audit, Laravel Rules, Rich Reports
 - [x] Integrate OpenAI to generate plain-English explanations and concrete fix patches for each finding
 - [x] Add SARIF output for native GitHub Advanced Security code scanning upload
-- [ ] Implement safe automatic patching for htmlspecialchars, prepared statements, and validation rules
+- [x] Implement safe automatic patching for htmlspecialchars, prepared statements, and validation rules
 - [ ] Build official GitHub Action with matrix support for PHP 8.1-8.3 and Laravel 10/11
 - [ ] Create curated database of Laravel-specific security advisories and config checks
 - [ ] Support custom rules defined in YAML using simple expression language

@@ -143,6 +143,8 @@ final class InitCommand extends Command
                 'enabled' => true,
                 'headers' => true,
                 'escape-output' => true,
+                'prepared-statements' => true,
+                'validation-rules' => true,
             ],
             'ignore' => [],
             'report' => [
