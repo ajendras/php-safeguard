@@ -71,8 +71,15 @@ final class SecretLeakRule implements RuleInterface
             }
         }
 
-        // Standalone high-entropy string literals (conservative: length > 32)
-        if ($node instanceof Scalar\String_ && strlen($node->value) > 32 && $this->isSecretValue($node->value)) {
+        // Standalone high-entropy string literals (conservative: length > 32).
+        // Explicitly skip regex patterns and strings containing spaces to
+        // prevent false positives on rule definitions, help text, etc.
+        if (
+            $node instanceof Scalar\String_
+            && strlen($node->value) > 32
+            && !$this->looksLikeRegex($node->value)
+            && $this->isSecretValue($node->value)
+        ) {
             return $this->createFinding($ctx, $node->value);
         }
 
@@ -103,6 +110,11 @@ final class SecretLeakRule implements RuleInterface
     private function isSecretValue(string $value): bool
     {
         if (strlen($value) < self::MIN_SECRET_LENGTH) {
+            return false;
+        }
+
+        // Real secrets virtually never contain spaces (or newlines).
+        if (str_contains($value, ' ')) {
             return false;
         }
 
@@ -140,6 +152,19 @@ final class SecretLeakRule implements RuleInterface
         }
 
         return $entropy;
+    }
+
+    /**
+     * Returns true for strings that look like regular expression patterns.
+     * Used to suppress false positives on the rule's own SECRET_REGEXES const.
+     */
+    private function looksLikeRegex(string $value): bool
+    {
+        if (strlen($value) < 8 || !str_starts_with($value, '/') || !str_ends_with($value, '/')) {
+            return false;
+        }
+
+        return preg_match('/[\^$.*+?()[\]{}|\\\\]/', $value) === 1;
     }
 
     private function createFinding(Context $ctx, string $secretValue): Finding
